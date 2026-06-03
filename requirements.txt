@@ -1,0 +1,6 @@
+# AI Agent 메모리 코스 — 의존성
+
+# 실제 임베딩 (02번 예제부터)
+openai>=1.50.0
+numpy>=2.0.0
+python-dotenv>=1.0.0

@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Vector DB persistence
+chroma_db/
+*.sqlite3
+
+# Cached embeddings
+.cache/

@@ -109,9 +109,9 @@
 - **메시지**: 본질은 라이브러리가 아니라 **평가**다. "내 메모리 시스템이 잘
   작동하는지 어떻게 측정하나"가 과정의 피날레.
 - **구성(결정됨)**:
-  1. `90_capstone/scratch.py` — 4·5세대 기법을 묶은 **통합 메모리 매니저를
+  1. `06_capstone/scratch.py` — 4·5세대 기법을 묶은 **통합 메모리 매니저를
      from-scratch로 구현** + probe 정답률로 자체 평가. (내부 원리 노출)
-  2. `90_capstone/mem0_compare.py` — **mem0**로 동일 시나리오를 돌려 비교.
+  2. `06_capstone/mem0_compare.py` — **mem0**로 동일 시나리오를 돌려 비교.
      "실무 도구는 우리가 만든 걸 이렇게 추상화한다"를 대조.
   - 두 파일 모두 **동일한 pgvector(Postgres) 백엔드를 공유**(mem0는 pgvector
     백엔드로 구성) → 같은 저장소 위에서 '직접 구현 vs 라이브러리'를 공정 비교.
@@ -148,12 +148,12 @@ course-agent-memory/
 ├─ 00_foundations/
 │   ├─ 01_embedding_basics.py    ✅ — 임베딩 원리(장난감)
 │   └─ 02_real_embeddings.py     ✅ — 실제 OpenAI 임베딩
-├─ 10_gen1_shortterm/    main.py   단기만 → CW초과·재시작소실
-├─ 20_gen2_window_summary/ main.py  슬라이딩 윈도우 + 러닝 요약 → 디테일 손실
-├─ 30_gen3_vector_rag/   main.py   pgvector RAG (도입부 toy→실DB 대조) → 청킹 노이즈
-├─ 40_gen4_fact_memory/  main.py   사실 추출 + ADD/UPDATE/DELETE ★
-├─ 50_gen5_hybrid_graph/ main.py   pgvector에 전문검색(키워드)+관계(그래프) 추가
-└─ 90_capstone/
+├─ 01_gen1_shortterm/    main.py   단기만 → CW초과·재시작소실
+├─ 02_gen2_window_summary/ main.py  슬라이딩 윈도우 + 러닝 요약 → 디테일 손실
+├─ 03_gen3_vector_rag/   main.py   pgvector RAG (도입부 toy→실DB 대조) → 청킹 노이즈
+├─ 04_gen4_fact_memory/  main.py   사실 추출 + ADD/UPDATE/DELETE ★
+├─ 05_gen5_hybrid_graph/ main.py   pgvector에 전문검색(키워드)+관계(그래프) 추가
+└─ 06_capstone/
     ├─ scratch.py                통합 매니저(from-scratch, pgvector) + 평가
     └─ mem0_compare.py           mem0(pgvector 백엔드)로 비교
 ```

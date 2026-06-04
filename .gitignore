@@ -10,3 +10,5 @@ chroma_db/
 
 # Cached embeddings
 .cache/
+
+*.MD

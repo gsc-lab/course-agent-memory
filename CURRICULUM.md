@@ -39,7 +39,7 @@
 | S3 | "지난주 서울에서 **부산으로 이사**했어." | **모순/갱신** 트리거 |
 | S4 | "참, 나 파이썬 공부 시작했어." | 무관 노이즈 |
 
-**재시작 후 probe 질문** (전 세대 공통 채점에 사용):
+**평가 질문** (전 세대 공통 채점에 사용):
 
 | # | 질문 | 노리는 실패/성공 |
 |---|---|---|
@@ -47,7 +47,7 @@
 | Q2 | "나 지금 어디 살아?" | 4세대 모순 해결 전엔 "서울/부산" 혼동 |
 | Q3 | "코코한테 요즘 무슨 일 있었지?" | 5세대 엔티티 검색에서 빛남 |
 
-> `common/scenario.py`는 (1) 세션 대화 리스트, (2) probe 질문+기대 정답을 제공하고,
+> `common/scenario.py`는 (1) 세션 대화 리스트, (2) 평가 질문+기대 정답을 제공하고,
 > `common/scoring.py`가 (3) 채점기(키워드 포함 기본 / capstone에서 LLM 판정)를 맡는다.
 > 모든 세대 예제가 이 둘을 import한다.
 
@@ -75,7 +75,7 @@
 - **푸는 문제**: 2세대의 요약 손실 — 원본을 보존하고 필요분만 검색.
 - **드러나는 실패 →**: 고정 청킹이 **턴·화자를 끊어** 엉뚱한 청크를 검색하고
   노이즈가 섞인다 → "원문 덩어리" 대신 "정제된 사실"을 저장하자는 4세대 동기.
-- **스택**: **여기서 진짜 Vector DB(pgvector) 도입.** 검색은 SQL 한 줄 —
+- **스택**: **여기서 실제 Vector DB(pgvector) 도입.** 검색은 SQL 한 줄 —
   `SELECT text FROM memories ORDER BY embedding <=> :q LIMIT k`("검색 = 거리순 정렬"이
   그대로 보인다). 도입부에 12줄 numpy '장난감 검색'을 먼저 보여 "마법이 아님"을
   각인한 뒤(01→02처럼 toy→real) 곧바로 pgvector로 같은 작업을 한다.
@@ -83,7 +83,7 @@
 
 ### 4세대 — 장기 메모리를 LLM 사실 추출로 정제 ★
 - **기법**: 저장 전 LLM으로 **원자적 사실** 추출("사용자는 고양이 코코를 키운다").
-  여기서 진짜 주인공은 추출이 아니라 **사실 갱신/충돌 해결**:
+  여기서 핵심은 추출이 아니라 **사실 갱신/충돌 해결**:
   새 사실이 기존과 모순되면 ADD / UPDATE / DELETE / NOOP 결정(mem0 방식).
 - **푸는 문제**: 3세대의 청킹 노이즈 + "서울→부산" 같은 모순을 상태로 관리.
 - **드러나는 실패 →**: 단일 사실 검색은 잘 되지만, "코코와 *관련된 모든 것*",
@@ -102,7 +102,7 @@
   의미는 `pgvector`(`<=>`), 키워드는 Postgres 전문검색(`tsvector`/`ts_rank`),
   관계/그래프는 `relations(subject, predicate, object)` 테이블 + JOIN/재귀 CTE.
   *주의*: `ts_rank`는 BM25가 아니라 TF‑IDF 계열 — "어휘 랭킹" 개념엔 충분하며,
-  진짜 BM25가 필요하면 후보군에 한해 파이썬 `rank-bm25`로 보강.
+  실제 BM25가 필요하면 후보군에 한해 파이썬 `rank-bm25`로 보강.
   *교육 포인트*: "메모리는 결국 DB이고, 검색은 쿼리 방식의 차이일 뿐"을 한 DB로 시연.
 
 ### 현재 — 메모리가 독립 인프라로 격상
@@ -110,13 +110,13 @@
   작동하는지 어떻게 측정하나"가 과정의 피날레.
 - **구성(결정됨)**:
   1. `06_capstone/scratch.py` — 4·5세대 기법을 묶은 **통합 메모리 매니저를
-     from-scratch로 구현** + probe 정답률로 자체 평가. (내부 원리 노출)
+     from-scratch로 구현** + 평가 질문 정답률로 자체 평가. (내부 원리 노출)
   2. `06_capstone/mem0_compare.py` — **mem0**로 동일 시나리오를 돌려 비교.
      "실무 도구는 우리가 만든 걸 이렇게 추상화한다"를 대조.
   - 두 파일 모두 **동일한 pgvector(Postgres) 백엔드를 공유**(mem0는 pgvector
     백엔드로 구성) → 같은 저장소 위에서 '직접 구현 vs 라이브러리'를 공정 비교.
     Letta·Zep·mem0가 모두 Postgres 기반이라 실무 정합성도 높다.
-- **평가 축**: probe 정답률(키워드 / LLM 판정), 검색 hit@k, 지연(latency),
+- **평가 축**: 평가 질문 정답률(키워드 / LLM 판정), 검색 hit@k, 지연(latency),
   토큰 사용량. 업계 벤치마크로 **LOCOMO**(멀티세션 대화 메모리) 언급.
 
 ## 5. 가로지르는 핵심 개념 (세대 사이에 삽입)
@@ -139,7 +139,7 @@
 ```
 course-agent-memory/
 ├─ common/
-│   ├─ scenario.py               공용 대화 + probe 질문 + 기대 정답   ✅
+│   ├─ scenario.py               공용 대화 + 평가 질문 + 기대 정답   ✅
 │   ├─ scoring.py                채점기 (키워드 기본 / LLM 판정 옵션)
 │   └─ llm.py                    OpenAI 임베딩·챗 래퍼 (중복 제거)
 ├─ db/
@@ -171,7 +171,7 @@ course-agent-memory/
 | 3세대 | `psycopg[binary]`, `pgvector` (+ Docker) | pgvector RAG (실 Vector DB 도입) |
 | 4세대 | (기존) `openai` | LLM 사실 추출·충돌 판정 |
 | 5세대 | (gen3의 pgvector 활용) | 전문검색(`ts_rank`)·관계 테이블은 Postgres 내장 |
-| 5세대(선택) | `rank-bm25` | `ts_rank` 대신 진짜 BM25가 필요할 때 후보군 재랭킹 |
+| 5세대(선택) | `rank-bm25` | `ts_rank` 대신 실제 BM25가 필요할 때 후보군 재랭킹 |
 | capstone | `mem0ai` | 실무 메모리 라이브러리 비교 (pgvector 백엔드) |
 
 > 인프라: `docker-compose.yml`(`pgvector/pgvector:pg17`)로 `docker compose up -d` 한 줄.
@@ -193,7 +193,7 @@ course-agent-memory/
 ## 9. 열린 질문 / 다음 단계
 
 **결정됨**: 폴더 = 세대별 폴더(번호 접두사) · 채점 = 키워드 기본 + capstone LLM 판정 ·
-저장소 = **pgvector를 gen3부터**(실DB 일관, Docker Compose) · 맨손 유사도검색은 gen3
+저장소 = **pgvector를 gen3부터**(실DB 일관, Docker Compose) · 간단 유사도 검색은 gen3
 도입부에 toy→실DB 대조로 흡수 · capstone = 직접 구현 후 mem0 비교.
 
 **진행 상황**: `common/scenario.py` ✅ 작성·검증 완료.

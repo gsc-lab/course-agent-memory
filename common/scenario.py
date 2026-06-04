@@ -1,24 +1,24 @@
 """
-scenario.py — 모든 세대 예제가 공유하는 단일 시나리오 (데이터 전용)
+scenario.py — 모든 세대 예제가 공유하는 대화와 평가 질문
 
 [왜 공통 시나리오인가]
 세대마다 다른 대화로 시연하면 "무엇이 좋아졌는지" 비교가 불가능하다.
-같은 멀티세션 대화 + 같은 평가 질문(probe)을 모든 세대가 처리하면,
+같은 멀티세션 대화 + 같은 평가 질문을 모든 세대가 처리하면,
 '같은 입력'에 대해 세대별로 답이 어떻게 달라지는지 한눈에 보인다.
 
 이 파일은 로직 없이 데이터만 제공한다:
   - SESSIONS : 시간 순서로 진행되는 멀티세션 대화
-  - PROBES   : (재시작 후) 던지는 평가 질문 + 기대 정답 키워드
+  - PROBES   : 평가 질문 + 기대 정답 키워드
 채점 로직은 common/scoring.py가 맡는다. 이 파일은 '정답'만 들고 있다.
 
 [시나리오가 의도적으로 심어 둔 함정]
-  - 휘발성   : 대화가 여러 세션에 흩어져 있다 → 단기 메모리만으론 재시작 시 소실
-  - 모순/갱신: S1 '서울 거주' → S3 '부산 이사'. 최신 사실로 갱신해야 한다
-  - 노이즈   : S4(파이썬)처럼 질문과 무관한 사실이 섞여 검색을 방해한다
+  - 휘발성   : 여러 세션의 대화는 단기 메모리만으로 보존하기 어렵다.
+  - 모순/갱신: S1의 서울 거주가 S3에서 부산 거주로 바뀐다.
+  - 노이즈   : S4의 파이썬 이야기처럼 질문과 무관한 사실도 섞인다.
 """
 
-# 각 세션은 시간 순으로 진행된다. turns는 (role, text) 쌍의 목록이며
-# role은 "user" 또는 "assistant".
+# 각 세션은 시간 순서대로 진행된다.
+# turns는 ("user" 또는 "assistant", 발화문) 쌍의 목록이다.
 SESSIONS = [
     {
         "id": "S1",
@@ -54,9 +54,9 @@ SESSIONS = [
     },
 ]
 
-# 재시작 후 던지는 평가 질문.
-#   expected : 정답에 포함돼야 할 키워드(하나라도 들어가면 정답으로 친다)
-#   note     : 이 질문이 어느 세대에서 통과/실패하는지(학습 포인트)
+# 세대별 메모리 성능을 확인하기 위한 평가 질문이다.
+# expected는 정답 판정에 필요한 키워드다.
+# note는 이 질문이 어떤 학습 포인트를 보여주는지 설명한다.
 PROBES = [
     {
         "question": "내 반려동물 이름이 뭐였지?",
@@ -77,15 +77,12 @@ PROBES = [
 
 
 def conversation():
-    """전체 대화를 시간 순서의 (role, text) 평탄 목록으로 돌려준다.
-
-    1세대처럼 '대화를 통째로' 다루는 예제가 그대로 쓰기 좋다.
-    """
+    """전체 대화를 시간 순서의 (role, text) 목록으로 돌려준다."""
     return [turn for session in SESSIONS for turn in session["turns"]]
 
 
 def user_messages():
-    """사용자 발화만 시간 순서로 돌려준다 (기억의 원천이 되는 텍스트)."""
+    """사용자 발화만 시간 순서대로 돌려준다."""
     return [text for role, text in conversation() if role == "user"]
 
 
@@ -104,7 +101,7 @@ if __name__ == "__main__":
             print(f"  {who}: {text}")
         print()
 
-    print("=== 재시작 후 평가 질문(probe) ===\n")
+    print("=== 평가 질문 ===\n")
     for i, probe in enumerate(PROBES, start=1):
         print(f"  Q{i}. {probe['question']}")
         print(f"      기대 키워드: {probe['expected']}")
@@ -112,5 +109,5 @@ if __name__ == "__main__":
 
     print(
         f"\n총 {len(SESSIONS)}개 세션 · 사용자 발화 {len(user_messages())}개 · "
-        f"probe {len(PROBES)}개."
+        f"평가 질문 {len(PROBES)}개."
     )

@@ -1,46 +1,53 @@
 """
-gen1 — 1세대 메모리: 단기 메모리만 (대화를 컨텍스트에 그대로 쌓기)
+gen1 — 1세대 메모리: 단기 메모리만 사용하기
 
 [이 세대의 방식]
-가장 단순한 메모리. 주고받은 메시지를 전부 컨텍스트 윈도우(CW)에 누적해 둔다.
-"지금 이 대화" 안에서는 잘 작동한다 — 방금 한 말을 기억하니까.
+가장 단순한 방식이다. 대화 내용을 따로 저장하지 않고,
+지금까지 주고받은 메시지를 모델 입력(context window, CW)에 그대로 넣는다.
+
+짧은 대화에서는 잘 작동한다. 방금 한 말이 아직 모델 입력 안에 있기 때문이다.
 
 [그런데 두 가지가 무너진다]
-1) CW 초과 : 대화가 길어질수록 토큰이 계속 늘지만, 모델의 컨텍스트 윈도우는
-             고정이다. 언젠가 한도를 넘어 옛 메시지가 잘려 나간다.
-2) 휘발성  : 메모리가 '대화(프로세스) 안'에만 있다. 재시작하면 전부 사라진다.
+1) CW 초과
+   대화가 길어지면 입력 토큰이 계속 늘어난다.
+   하지만 CW 크기는 고정되어 있어, 오래된 메시지는 결국 입력에서 빠진다.
 
-이 파일은 같은 공통 시나리오로 위 두 한계를 눈으로 보여준다.
+2) 휘발성
+   기억이 파일이나 DB에 저장되지 않는다.
+   프로그램을 다시 시작하면 이전 대화는 남아 있지 않다.
 
-[참고] 진짜 에이전트라면 누적한 대화를 LLM에 넣어 답하게 한다. 여기서는 LLM
-호출 없이(stdlib만으로) '필요한 사실이 메모리에 남아있는가'로 답변 가능성을
-시뮬레이션한다 — 메모리에 있으면 LLM도 답할 수 있고, 없으면 못 답하기 때문이다.
+이 파일은 같은 공통 시나리오로 위 두 한계를 직접 보여준다.
+
+[참고]
+실제 에이전트는 CW 안에 들어간 대화를 LLM에 넣고 답하게 한다.
+여기서는 외부 API를 쓰지 않기 위해, 질문과 관련된 발화가 CW 안에 남아 있는지만
+확인한다. 중요한 점은 "전체 대화"가 아니라 "모델이 지금 볼 수 있는 대화"다.
 """
 
 import pathlib
 import sys
 
-# 번호 폴더(01_gen1_...)는 `python -m`으로 못 돌리므로, repo 루트를 sys.path에 넣어
-# common 패키지를 import할 수 있게 한다. (세대 예제 공통 부트스트랩)
+# 번호로 시작하는 폴더는 패키지 이름으로 쓰기 어렵다.
+# 그래서 repo 루트를 import 경로에 추가해 common 패키지를 불러온다.
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from common import scoring
 from common.scenario import PROBES, conversation
 
-# 가상 컨텍스트 윈도우 한도(토큰). 실제 모델은 8K~200K 등으로 고정돼 있다.
+# 실습용 CW 한도. 실제 모델도 각자 정해진 최대 입력 토큰 수가 있다.
 CW_LIMIT = 500
 
 
 def est_tokens(text: str) -> int:
-    """토큰 수 대략 추정(한국어 ~2글자=1토큰 근사). 실제 토크나이저와는 다르다."""
+    """문자 길이로 토큰 수를 대략 추정한다."""
     return max(1, len(text) // 2)
 
 
 class ShortTermMemory:
-    """대화 메시지를 그대로 쌓아 두는 단기 메모리. (재시작하면 사라진다)"""
+    """현재 실행 중인 프로그램 안에서만 유지되는 대화 목록."""
 
     def __init__(self):
-        self.turns = []  # (role, text) 목록
+        self.turns = []  # 예: ("user", "안녕")
 
     def add(self, role: str, text: str) -> None:
         self.turns.append((role, text))
@@ -48,61 +55,121 @@ class ShortTermMemory:
     def text(self) -> str:
         return "\n".join(f"{role}: {text}" for role, text in self.turns)
 
-    def total_tokens(self) -> int:
-        return sum(est_tokens(text) for _, text in self.turns)
+    def total_tokens(self, turns: list[tuple[str, str]] | None = None) -> int:
+        target = self.turns if turns is None else turns
+        return sum(est_tokens(text) for _, text in target)
+
+    def visible_turns(self, limit: int) -> list[tuple[str, str]]:
+        """모델 입력에 넣을 수 있는 최신 메시지만 돌려준다."""
+        visible = []
+        used = 0
+        for role, text in reversed(self.turns):
+            cost = est_tokens(text)
+            if visible and used + cost > limit:
+                break
+            visible.append((role, text))
+            used += cost
+        return list(reversed(visible))
 
     def __len__(self) -> int:
         return len(self.turns)
 
 
-def answer(memory: ShortTermMemory, probe: dict) -> str:
-    """probe에 답한다(LLM 없이 시뮬레이션 — 위 docstring 참고)."""
-    blob = memory.text()
-    hit = next((kw for kw in probe["expected"] if kw in blob), None)
-    if hit is None:
+def clue_words(question: str) -> list[str]:
+    """질문과 관련된 과거 발화를 찾기 위한 단어를 고른다."""
+    clues = []
+    if "반려동물" in question or "이름" in question:
+        clues.extend(["반려동물", "고양이", "강아지", "이름"])
+    if "어디" in question or "살" in question:
+        clues.extend(["살고", "살아", "거주", "이사"])
+    if "코코" in question:
+        clues.append("코코")
+    return clues
+
+
+def answer(memory: ShortTermMemory, probe: dict, limit: int = CW_LIMIT) -> str:
+    """모델이 볼 수 있는 최신 대화만 사용해 질문에 답한다."""
+    visible = memory.visible_turns(limit)
+    clues = clue_words(probe["question"])
+    evidence = next(
+        (
+            text
+            for role, text in reversed(visible)
+            if role == "user" and any(clue in text for clue in clues)
+        ),
+        None,
+    )
+    if evidence is None:
         return "음... 그건 잘 기억이 안 나요."
-    evidence = next((text for _, text in memory.turns if hit in text), hit)
     return f'네, 기억나요 — "{evidence}" 라고 하셨어요.'
 
 
+def unrelated_followup_turns(count: int = 24) -> list[tuple[str, str]]:
+    """중요한 기억을 뒤로 밀어낼 무관한 후속 대화를 만든다."""
+    topics = [
+        "다음 주 회의 준비",
+        "점심 메뉴 후보",
+        "운동 루틴 조정",
+        "노트북 구매 기준",
+        "여행 짐 체크리스트",
+        "프로젝트 일정 정리",
+    ]
+    turns = []
+    for i in range(1, count + 1):
+        topic = topics[(i - 1) % len(topics)]
+        turns.append((
+            "user",
+            f"{topic}에 대해 {i}번째로 이어서 이야기해보자. "
+            "조건과 우선순위를 다시 정리하고 싶어.",
+        ))
+        turns.append((
+            "assistant",
+            f"좋아요. {topic}은 목적, 제약, 다음 행동 순서로 나누어 "
+            "정리하면 따라가기 쉽습니다.",
+        ))
+    return turns
+
+
 def demo_context_window() -> None:
-    """데모 1: 단기 메모리는 무한정 쌓여 CW 한도를 넘는다."""
-    print("[데모 1] 컨텍스트 윈도우 한도 — 단기 메모리는 끝없이 쌓인다")
-    print(f"  가상 CW 한도: {CW_LIMIT} 토큰 (모델마다 고정값)\n")
+    """데모 2: 대화가 길어지면 오래된 기억이 CW 밖으로 밀려난다."""
+    print("[데모 2] CW 한도 — 오래된 기억이 모델 입력에서 빠진다")
+    print(f"  실습용 CW 한도: {CW_LIMIT} 토큰")
 
     memory = ShortTermMemory()
-    turns = conversation()
-    crossed_at = None
-    # 같은 대화가 계속 이어지는 '긴 세션'을 흉내 내며 누적 토큰을 추적한다.
-    for round_no in range(1, 51):
-        for role, text in turns:
-            memory.add(role, text)
-        print(f"  대화 {round_no:>2}바퀴 후: 누적 {memory.total_tokens():>4} 토큰 "
-              f"(메시지 {len(memory)}개)")
-        if memory.total_tokens() > CW_LIMIT:
-            crossed_at = round_no
-            break
+    for role, text in conversation():
+        memory.add(role, text)
+    print(f"  핵심 대화 직후: {memory.total_tokens():>4} 토큰, 메시지 {len(memory)}개")
 
-    print(f"\n  → {crossed_at}바퀴째에 한도 초과. 토큰은 계속 늘지만 CW는 고정이라")
-    print("     언젠가 반드시 넘친다 — 초과분(옛 메시지)은 모델에 들어가지 못한다.\n")
+    for role, text in unrelated_followup_turns():
+        memory.add(role, text)
+
+    visible = memory.visible_turns(CW_LIMIT)
+    hidden_count = len(memory) - len(visible)
+    print(f"  후속 대화 이후 전체 누적: {memory.total_tokens():>4} 토큰, 메시지 {len(memory)}개")
+    print(f"  모델 입력에 남은 최신 대화: {memory.total_tokens(visible):>4} 토큰, 메시지 {len(visible)}개")
+    print(f"  모델이 볼 수 없는 오래된 메시지: {hidden_count}개\n")
+
+    answers = [answer(memory, probe) for probe in PROBES]
+    results = scoring.grade(PROBES, answers)
+    scoring.print_report("데모 2 · 긴 대화 후 모델 입력만 볼 때", results)
 
 
 def demo_with_memory() -> None:
-    """데모 2: 대화 직후, 메모리가 살아있으면 잘 답한다."""
+    """데모 1: 짧은 대화에서는 단기 메모리만으로도 답할 수 있다."""
     memory = ShortTermMemory()
     for role, text in conversation():
         memory.add(role, text)
     answers = [answer(memory, probe) for probe in PROBES]
     results = scoring.grade(PROBES, answers)
-    scoring.print_report("데모 2 · 메모리가 살아있을 때 (대화 직후)", results)
+    scoring.print_report("데모 1 · 짧은 대화 직후", results)
 
 
 def demo_after_restart() -> None:
-    """데모 3: 프로세스 재시작 = 빈 메모리. 전부 잊는다(휘발성)."""
-    memory = ShortTermMemory()  # 새 프로세스처럼 텅 빈 상태
+    """데모 3: 재시작하면 프로그램 안에 있던 대화 목록이 사라진다."""
+    memory = ShortTermMemory()  # 새로 실행한 프로그램처럼 빈 상태
     answers = [answer(memory, probe) for probe in PROBES]
     results = scoring.grade(PROBES, answers)
-    scoring.print_report("데모 3 · 프로세스 재시작 후 (메모리 휘발)", results)
+    scoring.print_report("데모 3 · 프로그램 재시작 후", results)
 
 
 if __name__ == "__main__":
@@ -111,12 +178,12 @@ if __name__ == "__main__":
         sys.stdout.reconfigure(encoding="utf-8")
 
     print("=== 1세대: 단기 메모리만 ===\n")
-    demo_context_window()
     demo_with_memory()
+    demo_context_window()
     demo_after_restart()
 
-    print("[한계] 1세대 단기 메모리의 두 가지 한계")
-    print(" 1) CW 초과 : 대화가 길어지면 토큰이 한도를 넘어 옛 기억이 잘려 나간다.")
-    print("    → 2세대(슬라이딩 윈도우 + 요약)가 '한도 안에서' 관리한다.")
-    print(" 2) 휘발성  : 재시작하면 전부 사라진다(데모 3에서 정답률 0%).")
-    print("    → 3세대(영속 Vector DB)가 '대화 밖'에 저장해 되살린다.")
+    print("[한계] 단기 메모리만으로는 부족한 이유")
+    print(" 1) CW 초과 : 긴 대화에서는 오래된 메시지가 모델 입력에서 빠진다.")
+    print("    → 2세대는 슬라이딩 윈도우와 요약으로 입력 크기를 관리한다.")
+    print(" 2) 휘발성  : 프로그램을 다시 시작하면 이전 대화가 남아 있지 않다.")
+    print("    → 3세대는 Vector DB에 기억을 저장해 다음 실행에서도 다시 찾는다.")

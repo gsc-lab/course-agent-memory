@@ -8,3 +8,7 @@ python-dotenv>=1.0.0
 # 3세대부터: pgvector(Postgres) 영속 벡터 저장소 (docker compose 필요)
 psycopg[binary]>=3.2
 pgvector>=0.3
+
+# 5세대: 다중 신호 검색 — 키워드(BM25)와 엔티티 그래프
+rank-bm25>=0.2
+networkx>=3.0

@@ -1,0 +1,25 @@
+# pgvector(Postgres) — 3세대부터 쓰는 영속 벡터 저장소.
+#   기동:  docker compose up -d
+#   접속:  postgresql://agent:agent@localhost:5433/agent_memory  (호스트 5433 → 컨테이너 5432)
+#   정지:  docker compose down       (데이터 유지)
+#          docker compose down -v    (데이터까지 삭제 = 완전 초기화)
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: course-agent-memory-db
+    environment:
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: agent
+      POSTGRES_DB: agent_memory
+    ports:
+      - "5433:5432"   # 호스트 5432가 다른 컨테이너에 점유되어 5433 사용
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent -d agent_memory"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

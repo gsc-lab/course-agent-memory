@@ -4,3 +4,7 @@
 openai>=1.50.0
 numpy>=2.0.0
 python-dotenv>=1.0.0
+
+# 3세대부터: pgvector(Postgres) 영속 벡터 저장소 (docker compose 필요)
+psycopg[binary]>=3.2
+pgvector>=0.3

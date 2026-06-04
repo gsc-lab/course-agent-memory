@@ -1,7 +1,7 @@
 # AI Agent 메모리 — 세대별 예제 커리큘럼 (설계 문서)
 
-> 이 문서는 **구현 전 설계도**입니다. 코드는 아직 작성하지 않았고(00_foundations
-> 01·02 제외), 각 예제를 어떤 순서·구성으로 만들지 합의하는 것이 목적입니다.
+> 이 문서는 **구현 진행 중인 설계도**입니다. 작성 완료: `00_foundations/01·02`,
+> `common/scenario.py`. 나머지는 이 문서 합의에 따라 순차 작성한다.
 
 ## 1. 학습 목표
 
@@ -34,9 +34,9 @@
 
 | 세션 | 발화 | 노리는 것 |
 |---|---|---|
-| S1 | "나는 지훈이야. 고양이 코코를 키워." | 기본 사실(semantic) |
+| S1 | "나는 지훈이야. 서울 살고, 고양이 코코를 키워." | 기본 사실(semantic) |
 | S2 | "요즘 코코가 사료를 안 먹어 걱정이야." | 엔티티 누적(episodic) |
-| S3 | "다음 달 서울에서 **부산으로 이사** 가." | **모순/갱신** 트리거 |
+| S3 | "지난주 서울에서 **부산으로 이사**했어." | **모순/갱신** 트리거 |
 | S4 | "참, 나 파이썬 공부 시작했어." | 무관 노이즈 |
 
 **재시작 후 probe 질문** (전 세대 공통 채점에 사용):
@@ -45,7 +45,7 @@
 |---|---|---|
 | Q1 | "내 반려동물 이름이 뭐였지?" | 1세대는 **재시작 소실**로 실패 |
 | Q2 | "나 지금 어디 살아?" | 4세대 모순 해결 전엔 "서울/부산" 혼동 |
-| Q3 | "코코 관련해서 무슨 얘기 했지?" | 5세대 엔티티 검색에서 빛남 |
+| Q3 | "코코한테 요즘 무슨 일 있었지?" | 5세대 엔티티 검색에서 빛남 |
 
 > `common/scenario.py`는 (1) 세션 대화 리스트, (2) probe 질문+기대 정답을 제공하고,
 > `common/scoring.py`가 (3) 채점기(키워드 포함 기본 / capstone에서 LLM 판정)를 맡는다.
@@ -75,8 +75,11 @@
 - **푸는 문제**: 2세대의 요약 손실 — 원본을 보존하고 필요분만 검색.
 - **드러나는 실패 →**: 고정 청킹이 **턴·화자를 끊어** 엉뚱한 청크를 검색하고
   노이즈가 섞인다 → "원문 덩어리" 대신 "정제된 사실"을 저장하자는 4세대 동기.
-- **스택**: **순수 numpy 인메모리 저장소**(`00_foundations/03_vector_store.py`),
-  `02`의 실제 임베딩.
+- **스택**: **여기서 진짜 Vector DB(pgvector) 도입.** 검색은 SQL 한 줄 —
+  `SELECT text FROM memories ORDER BY embedding <=> :q LIMIT k`("검색 = 거리순 정렬"이
+  그대로 보인다). 도입부에 12줄 numpy '장난감 검색'을 먼저 보여 "마법이 아님"을
+  각인한 뒤(01→02처럼 toy→real) 곧바로 pgvector로 같은 작업을 한다.
+  Docker는 여기서 등장(`docker compose up -d`). `02`의 실제 임베딩 사용.
 
 ### 4세대 — 장기 메모리를 LLM 사실 추출로 정제 ★
 - **기법**: 저장 전 LLM으로 **원자적 사실** 추출("사용자는 고양이 코코를 키운다").
@@ -86,7 +89,7 @@
 - **드러나는 실패 →**: 단일 사실 검색은 잘 되지만, "코코와 *관련된 모든 것*",
   "정확한 키워드" 질의엔 약하다 → 다중 신호 검색(5세대) 동기.
 - **핵심 교훈**: 메모리는 DB INSERT가 아니라 **상태 관리**다. Q2가 여기서 처음 정답.
-- **스택**: OpenAI Chat(추출·충돌판정) + numpy 저장소.
+- **스택**: OpenAI Chat(추출·충돌판정) + pgvector(gen3에서 이어 사용).
 
 ### 5세대 — 다중 신호 검색 (Vector + Graph + BM25)
 - **기법**: ① 벡터 유사도(의미) + ② 엔티티·관계 그래프(코코─소유자→지훈) +
@@ -95,7 +98,7 @@
 - **트레이드오프 명시**: 그래프는 강력하지만 **유지비·복잡도**가 크다. 또
   "그 사실이 *언제부터 언제까지* 참인가"(temporal)가 모순 해결과 직결된다
   (Zep/Graphiti의 bi-temporal 아이디어 소개).
-- **스택**: **여기서 pgvector(Postgres)로 전환** — DB 하나로 세 신호 처리:
+- **스택**: gen3부터 쓰던 **pgvector 위에 신호를 추가** — DB 하나로 세 신호 처리:
   의미는 `pgvector`(`<=>`), 키워드는 Postgres 전문검색(`tsvector`/`ts_rank`),
   관계/그래프는 `relations(subject, predicate, object)` 테이블 + JOIN/재귀 CTE.
   *주의*: `ts_rank`는 BM25가 아니라 TF‑IDF 계열 — "어휘 랭킹" 개념엔 충분하며,
@@ -136,28 +139,27 @@
 ```
 course-agent-memory/
 ├─ common/
-│   ├─ scenario.py               공용 대화 + probe 질문 + 기대 정답
-│   ├─ scoring.py                채점기 (키워드 포함 기본 / LLM 판정 옵션)
+│   ├─ scenario.py               공용 대화 + probe 질문 + 기대 정답   ✅
+│   ├─ scoring.py                채점기 (키워드 기본 / LLM 판정 옵션)
 │   └─ llm.py                    OpenAI 임베딩·챗 래퍼 (중복 제거)
 ├─ db/
-│   └─ schema.sql                memories·entities·relations + pgvector/FTS (5세대~)
-├─ docker-compose.yml            pgvector/pgvector:pg17 (5세대~)
+│   └─ schema.sql                memories·entities·relations + pgvector/FTS (gen3~)
+├─ docker-compose.yml            pgvector/pgvector:pg17 (gen3~)
 ├─ 00_foundations/
 │   ├─ 01_embedding_basics.py    ✅ — 임베딩 원리(장난감)
-│   ├─ 02_real_embeddings.py     ✅ — 실제 OpenAI 임베딩
-│   └─ 03_vector_store.py        numpy 인메모리 유사도 검색 저장소
+│   └─ 02_real_embeddings.py     ✅ — 실제 OpenAI 임베딩
 ├─ 10_gen1_shortterm/    main.py   단기만 → CW초과·재시작소실
 ├─ 20_gen2_window_summary/ main.py  슬라이딩 윈도우 + 러닝 요약 → 디테일 손실
-├─ 30_gen3_vector_rag/   main.py   청킹 + 벡터검색(numpy) → 청킹 노이즈
+├─ 30_gen3_vector_rag/   main.py   pgvector RAG (도입부 toy→실DB 대조) → 청킹 노이즈
 ├─ 40_gen4_fact_memory/  main.py   사실 추출 + ADD/UPDATE/DELETE ★
-├─ 50_gen5_hybrid_graph/ main.py   pgvector + 전문검색 + 관계테이블
+├─ 50_gen5_hybrid_graph/ main.py   pgvector에 전문검색(키워드)+관계(그래프) 추가
 └─ 90_capstone/
     ├─ scratch.py                통합 매니저(from-scratch, pgvector) + 평가
     └─ mem0_compare.py           mem0(pgvector 백엔드)로 비교
 ```
 
 > 각 세대 폴더는 `main.py`가 실행 진입점이며, 필요 시 `README.md`로 학습 포인트를
-> 따로 둘 수 있다. `db/schema.sql`·`docker-compose.yml`은 5세대와 capstone이 공유.
+> 따로 둘 수 있다. `db/schema.sql`·`docker-compose.yml`은 gen3부터 capstone까지 공유.
 
 ## 7. 기술 스택 / 의존성 로드맵
 
@@ -166,13 +168,14 @@ course-agent-memory/
 | 단계 | 새 의존성 | 용도 |
 |---|---|---|
 | 1~2세대 | (기존) `openai` | 요약 LLM 호출 |
-| 3·4세대 | (기존) `numpy`, `openai` | 인메모리 벡터 검색, 사실 추출 |
-| 5세대 | `psycopg[binary]`, `pgvector` (+ Docker) | pgvector 의미검색 · 전문검색 · 관계 |
+| 3세대 | `psycopg[binary]`, `pgvector` (+ Docker) | pgvector RAG (실 Vector DB 도입) |
+| 4세대 | (기존) `openai` | LLM 사실 추출·충돌 판정 |
+| 5세대 | (gen3의 pgvector 활용) | 전문검색(`ts_rank`)·관계 테이블은 Postgres 내장 |
 | 5세대(선택) | `rank-bm25` | `ts_rank` 대신 진짜 BM25가 필요할 때 후보군 재랭킹 |
 | capstone | `mem0ai` | 실무 메모리 라이브러리 비교 (pgvector 백엔드) |
 
 > 인프라: `docker-compose.yml`(`pgvector/pgvector:pg17`)로 `docker compose up -d` 한 줄.
-> DB 연결은 `DATABASE_URL` 환경변수(`.env`).
+> DB 연결은 `DATABASE_URL` 환경변수(`.env`). Docker는 **gen3부터** 필요.
 
 ## 8. 파일 공통 템플릿
 
@@ -180,7 +183,9 @@ course-agent-memory/
 
 1. **상단 docstring** — *이전 세대의 어떤 실패를 푸는가 → 새 기법 →
    새로 생기는 트레이드오프* 3단 구성.
-2. **공용 import** — `common/`의 `scenario.py`·`scoring.py`로 동일 대화·질문·채점 사용.
+2. **공용 import** — `common/`의 `scenario.py`·`scoring.py` 사용. 번호 폴더는
+   `python -m` 실행이 안 되므로, 각 세대 `main.py` 상단에 repo 루트를 `sys.path`에
+   추가하는 부트스트랩 한 줄을 둔다.
 3. **실행 → 관찰 → 한계** — 출력 끝에 `[한계]` 블록으로 다음 세대 예고.
 4. **단독 실행 가능**, 외부 의존성 최소, 주석은 "왜"를 설명.
 5. (Windows) stdout UTF-8 재설정 — `01`/`02`와 동일 패턴 적용.
@@ -188,12 +193,14 @@ course-agent-memory/
 ## 9. 열린 질문 / 다음 단계
 
 **결정됨**: 폴더 = 세대별 폴더(번호 접두사) · 채점 = 키워드 기본 + capstone LLM 판정 ·
-저장소 = numpy(3세대) → pgvector(5세대~, Docker Compose) · capstone = 직접 구현 후 mem0 비교.
+저장소 = **pgvector를 gen3부터**(실DB 일관, Docker Compose) · 맨손 유사도검색은 gen3
+도입부에 toy→실DB 대조로 흡수 · capstone = 직접 구현 후 mem0 비교.
+
+**진행 상황**: `common/scenario.py` ✅ 작성·검증 완료.
 
 **남은 결정**:
 - [ ] 5세대 키워드 랭킹: Postgres `ts_rank`로 충분 vs 파이썬 `rank-bm25` 보강
 - [ ] 5세대 그래프: Postgres 관계 테이블 + 재귀 CTE vs 파이썬 인메모리 그래프
-- [ ] 어느 세대부터 작성 시작할지 (권장: `common/scenario.py` + `00_foundations/03` 먼저)
 
 ---
 *상태: 설계 합의 단계. 이 문서 확정 후 세대별 코드 작성에 착수한다.*

@@ -50,7 +50,12 @@ def embed(texts: list[str]) -> np.ndarray:
     반환은 (문장 수, 1536) 모양의 numpy 배열.
     """
     resp = client.embeddings.create(model=MODEL, input=texts)
-    # 응답 순서가 바뀌어도 입력 순서와 맞도록 index 기준으로 정렬한다.
+    # 예: embed(["문장A", "문장B", "문장C"])를 호출하면 resp.data는 결과 3개짜리 리스트다.
+    # 각 결과는 index(입력 순서)와 embedding(1536개 실수 벡터)을 가진다.
+    #   index=0 -> 문장A, index=1 -> 문장B, index=2 -> 문장C
+    #
+    # 보통은 입력 순서대로 오지만, API 응답은 각 결과에 index를 명시해 준다.
+    # 그래서 혹시 순서가 바뀌어도 입력 문장과 벡터가 정확히 맞도록 index로 정렬한다.
     ordered = sorted(resp.data, key=lambda item: item.index)
     return np.array([item.embedding for item in ordered])
 

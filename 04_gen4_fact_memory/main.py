@@ -25,6 +25,9 @@ ADD / UPDATE / NOOP 중 하나로 상태를 관리하는 것이다.
 
 그래서 5세대에서는 벡터 검색에 엔티티·관계 그래프와 키워드 검색을 함께 쓴다.
 
+[참고] 추출과 판정에 LLM을 쓰므로, 결과(추출 문구·ADD/UPDATE 판정)는 모델·실행에
+따라 조금씩 달라질 수 있다.
+
 [준비물]
   1) docker compose up -d
   2) .env에 OPENAI_API_KEY 설정
@@ -61,7 +64,8 @@ def extract_facts(user_message: str) -> list[str]:
     facts = []
     for line in out.splitlines():
         cleaned = line.strip().lstrip("-•*0123456789. ").strip()
-        if cleaned and cleaned.upper() != "NONE":
+        # 'NONE', 'NONE.' 같은 빈 표시는 사실이 아니므로 건너뛴다.
+        if cleaned and cleaned.strip(" .。!").upper() != "NONE":
             facts.append(cleaned)
     return facts
 
@@ -77,7 +81,12 @@ def decide(new_fact: str, similar_fact: str) -> str:
         "ADD, UPDATE, NOOP 중 하나만 출력."
     )
     verdict = llm.chat(prompt).strip().upper()
-    return verdict if verdict in {"ADD", "UPDATE", "NOOP"} else "ADD"
+    # 모델이 'UPDATE.', '**UPDATE**', '결정: UPDATE'처럼 군더더기를 붙여도
+    # 견고하게 인식한다. (정확히 일치만 보면 살짝만 달라도 ADD로 잘못 떨어진다)
+    for v in ("UPDATE", "NOOP", "ADD"):
+        if v in verdict:
+            return v
+    return "ADD"
 
 
 def upsert_fact(conn, fact: str) -> tuple[str, str | None]:

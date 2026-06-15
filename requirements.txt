@@ -5,6 +5,9 @@ openai>=1.50.0
 numpy>=2.0.0
 python-dotenv>=1.0.0
 
+# 03번 예제: 로컬 토큰 카운팅(LLM 호출 없이 오프라인으로 토큰 수 계산)
+tiktoken>=0.7
+
 # 3세대부터: pgvector(Postgres) 영속 벡터 저장소 (docker compose 필요)
 psycopg[binary]>=3.2
 pgvector>=0.3
